@@ -1,4 +1,4 @@
-name: Build APK
+qname: Build APK
 
 on:
   workflow_dispatch:
@@ -116,3 +116,5 @@ jobs:
           echo "1) Use EAS Build (recommended): https://docs.expo.dev/eas/ - requires EAS_TOKEN and optional keystore secrets."
           echo "2) Eject to bare workflow (expo prebuild) which creates android/ and ios/ directories, then Gradle can build APKs."
           echo "If you want me to configure EAS Build in GitHub Actions, provide EAS credentials as GitHub Secrets (EAS_TOKEN) and indicate whether you want a release-signed keystore (provide as secrets) or debug builds."
+
+      
