@@ -1,41 +1,118 @@
-name: Build Android APK
+name: Build APK
 
 on:
+  workflow_dispatch:
   push:
-      branches:
-            - main
-                  - master
-                    workflow_dispatch:
+    branches: [ 'build-apk-workflow' ]
 
-                    jobs:
-                      build:
-                          runs-on: ubuntu-latest
+jobs:
+  build-apk:
+    name: Build debug APK (if android/ present)
+    runs-on: ubuntu-latest
 
-                              steps:
-                                    - name: Checkout repository
-                                            uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-                                                  - name: Set up JDK 17
-                                                          uses: actions/setup-java@v4
-                                                                  with:
-                                                                            java-version: '17'
-                                                                                      distribution: 'temurin'
+      - name: Unzip project archive
+        run: |
+          if [ -f STgeorge-main-1.zip ]; then
+            unzip -o STgeorge-main-1.zip -d extracted
+            if [ -d extracted/STgeorge-main ]; then
+              echo "Found extracted/STgeorge-main, moving contents to workspace root"
+              # Move hidden files as well
+              shopt -s dotglob || true
+              mv extracted/STgeorge-main/* . || true
+            else
+              echo "Archive extracted but expected folder extracted/STgeorge-main not found"
+              ls -la extracted || true
+            fi
+          else
+            echo "STgeorge-main-1.zip not found in repository root"
+            ls -la || true
+            exit 1
+          fi
 
-                                                                                            - name: Setup Gradle
-                                                                                                    uses: gradle/actions/setup-gradle@v3
+      - name: Check for android directory
+        id: check_android
+        run: |
+          if [ -d android ]; then
+            echo "android_present=true" >> "$GITHUB_OUTPUT"
+            ls -la android || true
+          else
+            echo "android_present=false" >> "$GITHUB_OUTPUT"
+            echo "No android/ directory found — this looks like an Expo-managed project. The workflow will stop here and provide instructions in the logs."
+          fi
 
-                                                                                                          - name: Make gradle wrapper executable
-                                                                                                                  run: chmod +x gradlew
+      - name: Setup Java
+        if: steps.check_android.outputs.android_present == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
 
-                                                                                                                        - name: Build APK
-                                                                                                                                run: ./gradlew assembleDebug
+      - name: Setup Node
+        if: steps.check_android.outputs.android_present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
 
-                                                                                                                                      - name: Upload APK Artifact
-                                                                                                                                              uses: actions/upload-artifact@v4
-                                                                                                                                                      with:
-                                                                                                                                                                name: app-debug
-                                                                                                                                                                          path: app/build/outputs/apk/debug/app-debug.apk
-                                                                                          
-                                                                                          
-                                                                                          
-                                                                          
+      - name: Install dependencies
+        if: steps.check_android.outputs.android_present == 'true'
+        run: |
+          # Install with yarn if available, otherwise npm
+          if [ -f yarn.lock ]; then
+            echo "Using yarn"
+            yarn install --frozen-lockfile || yarn install
+          else
+            echo "Using npm"
+            npm ci || npm install
+          fi
+
+      - name: Build Android debug APK
+        if: steps.check_android.outputs.android_present == 'true'
+        working-directory: android
+        run: |
+          chmod +x ./gradlew || true
+          ./gradlew assembleDebug -Pci --no-daemon
+
+      - name: Find and upload APK artifact
+        if: steps.check_android.outputs.android_present == 'true'
+        run: |
+          # Common debug apk path
+          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+          if [ -f "$APK_PATH" ]; then
+            echo "APK found at $APK_PATH"
+            mkdir -p output
+            cp "$APK_PATH" output/stgeorge.mekha-debug.apk
+            ls -la output
+          else
+            echo "APK not found at expected path. Searching for any apk under android/app/build/outputs/apk"
+            found=$(find android -name "*.apk" | head -n 1 || true)
+            if [ -n "$found" ]; then
+              echo "Found apk: $found"
+              mkdir -p output
+              cp "$found" output/stgeorge.mekha-debug.apk
+              ls -la output
+            else
+              echo "No APK produced. Gradle log should show errors."
+              exit 1
+            fi
+          fi
+
+      - name: Upload APK artifact
+        if: steps.check_android.outputs.android_present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stgeorge.mekha-debug.apk
+          path: output/stgeorge.mekha-debug.apk
+
+      - name: Expo-managed project notice
+        if: steps.check_android.outputs.android_present == 'false'
+        run: |
+          echo "No android/ folder detected. This repository appears to be an Expo-managed project. To build an APK for Expo-managed projects you can either:"
+          echo "1) Use EAS Build (recommended): https://docs.expo.dev/eas/ - requires EAS_TOKEN and optional keystore secrets."
+          echo "2) Eject to bare workflow (expo prebuild) which creates android/ and ios/ directories, then Gradle can build APKs."
+          echo "If you want me to configure EAS Build in GitHub Actions, provide EAS credentials as GitHub Secrets (EAS_TOKEN) and indicate whether you want a release-signed keystore (provide as secrets) or debug builds."
